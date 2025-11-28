@@ -52,108 +52,35 @@ def to_excel_view(df: pd.DataFrame) -> pd.DataFrame:
 
 def parse_dimension_to_sqm(dim_str: str) -> float:
     """
-    Parse strings like:
-    - '841mm x 1189mm', '594 x 841mm', '1.2m x 2m'
-    - '260mm Ø', '50mm Diameter', '290mm' (treated as diameter)
-    - '2 x 2547mm x 755mm 2 x 967mm x 755mm'
-    - 'Various - 7 Decals 1. 2 x 355mm x 355mm 2. 2 x 120mm x 170mm ... 7. 4 x 30mm x 30mm'
-    - '25,000mm (w) x 75mm (h)   10 strips x 2,500mm (w)'
-
-    Returns SQM per row "set":
-    - for normal rectangles: w × h
-    - for circles: π × (d/2)²
-    - for multi-size strings: sum over all (qty × w × h)
+    Parse strings like '841mm x 1189mm', '594 x 841mm', '1.2m x 2m' to sqm.
+    Assumptions:
+    - mm, cm, m supported
+    - if no unit, assume mm
     """
     if pd.isna(dim_str):
         return np.nan
 
-    s = str(dim_str).strip().lower()
-    if not s:
-        return np.nan
-
-    # Normalise separators
+    s = str(dim_str).lower()
     s = s.replace("×", "x")
 
-    # Remove thousand separators inside numbers, e.g. 25,000mm -> 25000mm
-    s = re.sub(r"(?<=\d),(?=\d)", "", s)
-
-    def to_m(v, u):
-        """Convert numeric value + unit to metres."""
-        if u == "cm":
-            return v / 100.0
-        if u == "m":
-            return v
-        # default (mm)
-        return v / 1000.0
-
-    # 1) Explicit diameter formats: Ø, "diameter", "dia"
-    if any(tok in s for tok in ["diameter", "ø", "⌀", " dia", "dia "]):
-        m = re.search(r"(\d+(\.\d+)?)\s*(mm|cm|m)?", s)
-        if m:
-            v = float(m.group(1))
-            unit = m.group(3) or "mm"
-            d_m = to_m(v, unit)
-            return math.pi * (d_m / 2.0) ** 2
-
-    # 2) Multi-size / "various" patterns with explicit qty:
-    #    e.g. '2 x 355mm x 355mm', '4 x 70mm x 60mm'
-    pattern_q = re.compile(
-        r"(?P<qty>\d+)\s*x\s*"
-        r"(?P<w>\d+(\.\d+)?)\s*(?P<uw>mm|cm|m)?\s*x\s*"
-        r"(?P<h>\d+(\.\d+)?)\s*(?P<uh>mm|cm|m)?"
-    )
-
-    total_area = 0.0
-    any_match = False
-    for m in pattern_q.finditer(s):
-        any_match = True
-        qty = int(m.group("qty"))
-        w = float(m.group("w"))
-        h = float(m.group("h"))
-        uw = m.group("uw") or "mm"
-        uh = m.group("uh") or "mm"
-        w_m = to_m(w, uw)
-        h_m = to_m(h, uh)
-        total_area += qty * w_m * h_m
-
-    if any_match:
-        return total_area
-
-    # 3) Standard rectangle: first "w x h" pair
-    pattern_wh = re.compile(
-        r"(?P<w>\d+(\.\d+)?)\s*(?P<uw>mm|cm|m)?\s*x\s*"
-        r"(?P<h>\d+(\.\d+)?)\s*(?P<uh>mm|cm|m)?"
-    )
-    m = pattern_wh.search(s)
-    if m:
-        w = float(m.group("w"))
-        h = float(m.group("h"))
-        uw = m.group("uw") or "mm"
-        uh = m.group("uh") or "mm"
-        w_m = to_m(w, uw)
-        h_m = to_m(h, uh)
-        return w_m * h_m
-
-    # 4) Single numeric value: treat as diameter
-    nums = re.findall(r"(\d+(\.\d+)?)", s)
-    if len(nums) == 1:
-        v = float(nums[0][0])
-        um = re.search(r"(mm|cm|m)", s)
-        unit = um.group(1) if um else "mm"
-        d_m = to_m(v, unit)
-        return math.pi * (d_m / 2.0) ** 2
-
-    # 5) Fallback: first two numbers as width & height rectangle
+    # Find two numeric values with optional unit
     matches = re.findall(r"(\d+(\.\d+)?)\s*(mm|cm|m)?", s)
     if len(matches) < 2:
         return np.nan
 
     (v1, _, u1) = matches[0]
     (v2, _, u2) = matches[1]
+
     v1 = float(v1)
     v2 = float(v2)
-    u1 = u1 or "mm"
-    u2 = u2 or "mm"
+
+    def to_m(v, u):
+        if u == "cm":
+            return v / 100.0
+        if u == "m":
+            return v
+        # default or mm
+        return v / 1000.0
 
     w = to_m(v1, u1)
     h = to_m(v2, u2)
@@ -292,9 +219,13 @@ def build_items_from_columns(
     max_row, max_col = df.shape
     result_rows = []
 
-    # Convert Excel row to df index (Excel row 2 -> df index 0)
+    # Convert Excel row to df index.
+    # If Excel header is on row H (1-based), then our df index 0 corresponds
+    # to Excel row H+1. So: df_row = excel_row - (H + 1).
+    header_row = int(st.session_state.get("excel_header_row", 1))
+
     def excel_to_df_row(excel_row):
-        return excel_row - 2
+        return excel_row - (header_row + 1)
 
     size_r = excel_to_df_row(size_row) if size_row else None
     mat_r = excel_to_df_row(material_row) if material_row else None
@@ -416,10 +347,10 @@ if "ds_syn_input" not in st.session_state:
 if "ss_syn_input" not in st.session_state:
     st.session_state["ss_syn_input"] = "ss,single sided,single-sided,1s,1 sided,1sided,single"
 if "double_sided_loading_percent" not in st.session_state:
-    st.session_state["double_sided_loading_percent"] = 25.0
+    st.session_state["double_sided_loading_percent"] = 20.0
 # global volume tier config (SQM vs %)
 if "tier_count" not in st.session_state:
-    st.session_state["tier_count"] = 4  # e.g. 4 tiers by default
+    st.session_state["tier_count"] = 1  # default 1 tier; user can add more
 if "tier_thresholds" not in st.session_state:
     st.session_state["tier_thresholds"] = [250.0, 500.0, 750.0, 1000.0]
 if "tier_discounts" not in st.session_state:
@@ -456,11 +387,31 @@ file_bytes = uploaded_file.getvalue()
 excel_file = pd.ExcelFile(BytesIO(file_bytes))
 sheet_name = st.selectbox("Select sheet", options=excel_file.sheet_names)
 
-# --- Read selected sheet into DataFrame ---
-df = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name)
+# --- Read selected sheet into DataFrame (no header first) ---
+df_raw = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, header=None)
+
+st.subheader(f"Raw sheet preview (first 30 rows) – choose header row below")
+st.dataframe(df_raw.head(30))
+
+# Let user choose which Excel row is the header (1-based)
+max_row = len(df_raw)
+header_row_num = st.number_input(
+    "Which row is the header? (1 = first row in Excel)",
+    min_value=1,
+    max_value=max_row if max_row > 0 else 1,
+    value=st.session_state.get("excel_header_row", 1),
+    step=1,
+)
+st.session_state["excel_header_row"] = int(header_row_num)
+
+# Build a DataFrame using that row as header
+header_row_idx = int(header_row_num) - 1
+df = df_raw.copy()
+df.columns = df_raw.iloc[header_row_idx]
+df = df.iloc[header_row_idx + 1 :].reset_index(drop=True)
 
 # Show the sheet in Excel-like view (A,B,C... and rows 1,2,3...)
-st.subheader(f"Sheet preview (Excel-style): {sheet_name}")
+st.subheader(f"Sheet preview (Excel-style, using row {int(header_row_num)} as headers): {sheet_name}")
 excel_view = to_excel_view(df)
 st.dataframe(excel_view)
 
