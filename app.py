@@ -52,9 +52,8 @@ def to_excel_view(df: pd.DataFrame) -> pd.DataFrame:
 
 def parse_dimension_to_sqm(dim_str: str) -> float:
     """
-    Handles size strings with your "other considerations":
-
-    1. Single value or diameter style:
+    Handles:
+    1. Single value or 'Ø / Diameter':
        - '260mm Ø', '333mm Ø', '520mm Ø', '50mm Diameter', '290mm'
        -> treated as CIRCLES using that value as DIAMETER.
 
@@ -65,7 +64,7 @@ def parse_dimension_to_sqm(dim_str: str) -> float:
 
     3. Multi sizes *without* quantities (often 'Various - ...'):
        - 'Various - 8 Decals 1. 210mm x 25mm 2. 210mm x 25mm ...'
-       -> sums every 'width x height' pair as qty=1 each.
+       -> sums every 'width x height' pair as 1 each.
        - ignores 'cap height' bits that don’t have an 'x'.
 
     4. Long descriptions:
@@ -85,19 +84,14 @@ def parse_dimension_to_sqm(dim_str: str) -> float:
         return np.nan
 
     # Is this basically a "cap height" / text height description?
-    cap_like = (
-        "cap height" in s
-        or "cap ht" in s
-        or "cap-height" in s
-        or "high text" in s
-    )
+    cap_like = ("cap height" in s or "cap ht" in s or
+                "cap-height" in s or "high text" in s)
 
     # Normalise separators and remove thousand separators
     s = s.replace("×", "x")
     s = re.sub(r"(?<=\d),(?=\d)", "", s)
 
     def to_m(v, u):
-        """Convert numeric value + unit to metres."""
         if u == "cm":
             return v / 100.0
         if u == "m":
@@ -107,10 +101,10 @@ def parse_dimension_to_sqm(dim_str: str) -> float:
 
     # 1) Explicit diameter words / Ø / dia
     if any(tok in s for tok in ["diameter", "ø", "⌀", " dia", "dia "]):
-        m_d = re.search(r"(\d+(\.\d+)?)\s*(mm|cm|m)?", s)
-        if m_d:
-            v = float(m_d.group(1))
-            unit = m_d.group(3) or "mm"
+        m = re.search(r"(\d+(\.\d+)?)\s*(mm|cm|m)?", s)
+        if m:
+            v = float(m.group(1))
+            unit = m.group(3) or "mm"
             d_m = to_m(v, unit)
             return math.pi * (d_m / 2.0) ** 2
 
@@ -123,13 +117,13 @@ def parse_dimension_to_sqm(dim_str: str) -> float:
 
     total_area = 0.0
     any_q = False
-    for m_q in pattern_q.finditer(s):
+    for m in pattern_q.finditer(s):
         any_q = True
-        qty = int(m_q.group("qty"))
-        w = float(m_q.group("w"))
-        h = float(m_q.group("h"))
-        uw = m_q.group("uw") or "mm"
-        uh = m_q.group("uh") or "mm"
+        qty = int(m.group("qty"))
+        w = float(m.group("w"))
+        h = float(m.group("h"))
+        uw = m.group("uw") or "mm"
+        uh = m.group("uh") or "mm"
         w_m = to_m(w, uw)
         h_m = to_m(h, uh)
         total_area += qty * w_m * h_m
@@ -148,20 +142,20 @@ def parse_dimension_to_sqm(dim_str: str) -> float:
         # "Various" / decals etc: sum ALL pairs as qty 1 each
         if len(matches) > 1 and ("various" in s or "decal" in s):
             total = 0.0
-            for m_wh in matches:
-                w = float(m_wh.group("w"))
-                h = float(m_wh.group("h"))
-                uw = m_wh.group("uw") or "mm"
-                uh = m_wh.group("uh") or "mm"
+            for m in matches:
+                w = float(m.group("w"))
+                h = float(m.group("h"))
+                uw = m.group("uw") or "mm"
+                uh = m.group("uh") or "mm"
                 total += to_m(w, uw) * to_m(h, uh)
             return total
         else:
             # Normal case: just the first W x H
-            m_wh0 = matches[0]
-            w = float(m_wh0.group("w"))
-            h = float(m_wh0.group("h"))
-            uw = m_wh0.group("uw") or "mm"
-            uh = m_wh0.group("uh") or "mm"
+            m = matches[0]
+            w = float(m.group("w"))
+            h = float(m.group("h"))
+            uw = m.group("uw") or "mm"
+            uh = m.group("uh") or "mm"
             return to_m(w, uw) * to_m(h, uh)
 
     # 4) Single numeric value: treat as DIAMETER circle (unless cap-height text)
@@ -441,10 +435,10 @@ if "ds_syn_input" not in st.session_state:
 if "ss_syn_input" not in st.session_state:
     st.session_state["ss_syn_input"] = "ss,single sided,single-sided,1s,1 sided,1sided,single"
 if "double_sided_loading_percent" not in st.session_state:
-    st.session_state["double_sided_loading_percent"] = 25.0
+    st.session_state["double_sided_loading_percent"] = 20.0
 # global volume tier config (SQM vs %)
 if "tier_count" not in st.session_state:
-    st.session_state["tier_count"] = 4  # e.g. 4 tiers by default
+    st.session_state["tier_count"] = 1  # default 1 tier
 if "tier_thresholds" not in st.session_state:
     st.session_state["tier_thresholds"] = [250.0, 500.0, 750.0, 1000.0]
 if "tier_discounts" not in st.session_state:
@@ -481,11 +475,28 @@ file_bytes = uploaded_file.getvalue()
 excel_file = pd.ExcelFile(BytesIO(file_bytes))
 sheet_name = st.selectbox("Select sheet", options=excel_file.sheet_names)
 
-# --- Read selected sheet into DataFrame ---
-df = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name)
+# --- Read selected sheet into DataFrame (no header first) ---
+df_raw = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, header=None)
 
-# Show the sheet in Excel-like view (A,B,C... and rows 1,2,3...)
-st.subheader(f"Sheet preview (Excel-style): {sheet_name}")
+st.subheader(f"Raw sheet preview (first 50 rows) for header selection")
+st.dataframe(df_raw.head(50))
+
+max_header_row = len(df_raw)
+header_row_num = st.number_input(
+    "Which Excel row is the header? (1 = first row)",
+    min_value=1,
+    max_value=max_header_row,
+    value=1,
+    step=1,
+)
+
+header_index = header_row_num - 1
+header_row = df_raw.iloc[header_index].astype(str)
+df = df_raw.iloc[header_index + 1 :].copy()
+df.columns = header_row
+
+# Show the sheet in Excel-like view (A,B,C... and rows 1,2,3...) AFTER header applied
+st.subheader(f"Sheet preview (Excel-style) after header row selection: {sheet_name}")
 excel_view = to_excel_view(df)
 st.dataframe(excel_view)
 
