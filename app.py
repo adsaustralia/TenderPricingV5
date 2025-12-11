@@ -214,6 +214,78 @@ def detect_side(text, ds_synonyms, ss_synonyms, default="SS"):
     return default
 
 
+# ---------- Calculation range parsing helpers ----------
+
+def parse_column_range_spec(spec: str, valid_letters: list[str]) -> set[str] | None:
+    """Parse a spec like 'A-AB, AC, AD-AF' into a set of Excel column letters.
+    Returns None if spec is blank -> meaning 'all columns allowed'."""
+    if spec is None:
+        return None
+    s = str(spec).strip()
+    if not s:
+        return None
+
+    letter_to_idx = {col: i for i, col in enumerate(valid_letters)}
+    allowed: set[str] = set()
+
+    for part in s.split(","):
+        token = part.strip().upper()
+        if not token:
+            continue
+        if "-" in token:
+            start_str, end_str = [p.strip().upper() for p in token.split("-", 1)]
+            if start_str not in letter_to_idx or end_str not in letter_to_idx:
+                continue
+            start_i = letter_to_idx[start_str]
+            end_i = letter_to_idx[end_str]
+            if end_i < start_i:
+                start_i, end_i = end_i, start_i
+            for i in range(start_i, end_i + 1):
+                allowed.add(valid_letters[i])
+        else:
+            if token in letter_to_idx:
+                allowed.add(token)
+
+    return allowed or None
+
+
+def parse_row_range_spec(spec: str, min_row: int, max_row: int) -> set[int] | None:
+    """Parse '5-200, 250-300, 62' into a set of Excel row numbers.
+    Returns None if spec is blank -> meaning 'all rows allowed'."""
+    if spec is None:
+        return None
+    s = str(spec).strip()
+    if not s:
+        return None
+
+    allowed: set[int] = set()
+    for part in s.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_str, end_str = [p.strip() for p in token.split("-", 1)]
+            try:
+                start_i = int(start_str)
+                end_i = int(end_str)
+            except ValueError:
+                continue
+            if end_i < start_i:
+                start_i, end_i = end_i, start_i
+            for i in range(start_i, end_i + 1):
+                if min_row <= i <= max_row:
+                    allowed.add(i)
+        else:
+            try:
+                val = int(token)
+            except ValueError:
+                continue
+            if min_row <= val <= max_row:
+                allowed.add(val)
+
+    return allowed or None
+
+
 def build_items_from_rows(
     df,
     col_letters_map,
@@ -633,6 +705,34 @@ if st.button("Prepare file with hidden rows/columns"):
     )
 
 # ======================================================
+# --- Calculation range for SQM/pricing ---
+st.sidebar.subheader("Calculation range")
+
+st.sidebar.markdown(
+    "Limit which Excel **columns** and **rows** are actually **calculated** "
+    "for SQM/pricing. Leave blank to calculate all."
+)
+
+excel_col_letters = list(col_letters.keys())
+
+min_excel_row = 2  # first data row after header
+max_excel_row = len(df) + 1  # header row 1 + data rows
+
+col_range_spec = st.sidebar.text_input(
+    "Columns to CALCULATE (e.g. A-AB, AC, AD-AF)",
+    value="",
+    key="calc_cols_spec",
+)
+
+row_range_spec = st.sidebar.text_input(
+    "Rows to CALCULATE (Excel rows, e.g. 62-227, 250-260)",
+    value="",
+    key="calc_rows_spec",
+)
+
+allowed_calc_cols = parse_column_range_spec(col_range_spec, excel_col_letters)
+allowed_calc_rows = parse_row_range_spec(row_range_spec, min_excel_row, max_excel_row)
+
 # STEP 3: SQM & PRICE CALCULATION
 # ======================================================
 
@@ -791,6 +891,11 @@ if layout_type == "Items are in rows (BP-style)":
             ds_synonyms=ds_synonyms,
             ss_synonyms=ss_synonyms,
         )
+
+        # Apply row calculation range if specified
+        if allowed_calc_rows is not None and "Source Row" in calc_df.columns:
+            calc_df = calc_df[calc_df["Source Row"].isin(allowed_calc_rows)]
+
         st.session_state["calc_df"] = calc_df
 
 elif layout_type == "Items are in columns (Foot Locker-style)":
@@ -875,6 +980,13 @@ elif layout_type == "Items are in columns (Foot Locker-style)":
             ds_synonyms=ds_synonyms,
             ss_synonyms=ss_synonyms,
         )
+
+        # Apply column/row calculation range if specified
+        if allowed_calc_cols is not None and "Source Column" in calc_df.columns:
+            calc_df = calc_df[calc_df["Source Column"].isin(allowed_calc_cols)]
+        if allowed_calc_rows is not None and "Source Row" in calc_df.columns:
+            calc_df = calc_df[calc_df["Source Row"].isin(allowed_calc_rows)]
+
         st.session_state["calc_df"] = calc_df
 
 # ---------- Show calculation results + Material group pricing ----------
