@@ -1,5 +1,29 @@
 {
-  "group_assignments": {},
-  "group_prices": {},
+  "group_assignments": {
+    "3mm Corflute": "CORFLUTE_3MM",
+    "2mm Screenboard": "SCREENBOARD_2MM",
+    "400gsm Artboard": "POSTER_BOARD",
+    "Jellyfish Supercling": "WINDOW_SUPERCLING",
+    "Synthetic Banner": "BANNER_SYNTHETIC",
+    "Ferrous Substrate": "FERROUS",
+    "Avery MPI1105": "VINYL_MPI1105",
+    "3M 7725": "VINYL_3M7725",
+    "Arlon 8000 Hi Tac SAV": "VINYL_ARLON8000",
+    "Duratran backlit": "BACKLIT_DURATRAN",
+    "Braille Acrylic Signs": "BRAILLE_SIGNS"
+  },
+  "group_prices": {
+    "BACKLIT_DURATRAN": 55.0,
+    "BANNER_SYNTHETIC": 38.0,
+    "BRAILLE_SIGNS": 65.0,
+    "CORFLUTE_3MM": 35.0,
+    "FERROUS": 50.0,
+    "POSTER_BOARD": 28.0,
+    "SCREENBOARD_2MM": 32.0,
+    "VINYL_3M7725": 40.0,
+    "VINYL_ARLON8000": 39.0,
+    "VINYL_MPI1105": 42.0,
+    "WINDOW_SUPERCLING": 45.0
+  },
   "material_overrides": {}
 }
