@@ -565,6 +565,17 @@ if uploaded_file is None:
 # Use getvalue() so the file content is available on every rerun
 file_bytes = uploaded_file.getvalue()
 
+# Track a 'current workbook' in session so updates to different sheets
+# can accumulate into a single Excel file.
+if "uploaded_file_name" not in st.session_state or st.session_state["uploaded_file_name"] != uploaded_file.name:
+    # New upload: reset tracking
+    st.session_state["uploaded_file_name"] = uploaded_file.name
+    st.session_state["current_workbook_bytes"] = file_bytes
+else:
+    # Same upload: keep existing current_workbook_bytes if present
+    st.session_state.setdefault("current_workbook_bytes", file_bytes)
+
+
 # --- Load sheet list ---
 excel_file = pd.ExcelFile(BytesIO(file_bytes))
 sheet_name = st.selectbox("Select sheet", options=excel_file.sheet_names)
@@ -679,7 +690,8 @@ st.dataframe(preview_excel_view)
 # Export with hidden rows/columns
 st.subheader("Export with Hidden Rows / Columns")
 if st.button("Prepare file with hidden rows/columns"):
-    wb = load_workbook(BytesIO(file_bytes))
+    base_bytes = st.session_state.get("current_workbook_bytes", file_bytes)
+    wb = load_workbook(BytesIO(base_bytes))
     ws = wb[sheet_name]
 
     # Hide selected columns
@@ -693,6 +705,9 @@ if st.button("Prepare file with hidden rows/columns"):
     out_buf = BytesIO()
     wb.save(out_buf)
     out_buf.seek(0)
+
+    # Update current workbook bytes so subsequent sheet updates build on this
+    st.session_state["current_workbook_bytes"] = out_buf.getvalue()
 
     st.download_button(
         "Download workbook (with hidden rows/columns)",
@@ -1602,7 +1617,8 @@ if st.session_state["calc_df"] is not None:
             if not any([sqm_annum_col_letter, sqm_run_col_letter, price_annum_col_letter, price_run_col_letter]):
                 st.warning("Please type at least one output column (e.g. N, Q, AA).")
             else:
-                wb2 = load_workbook(BytesIO(file_bytes))
+                base_bytes2 = st.session_state.get("current_workbook_bytes", file_bytes)
+                wb2 = load_workbook(BytesIO(base_bytes2))
                 ws2 = wb2[sheet_name]
 
                 for _, r in calc_with_price.iterrows():
@@ -1632,6 +1648,9 @@ if st.session_state["calc_df"] is not None:
                 wb2.save(out_buf2)
                 out_buf2.seek(0)
 
+                # Update current workbook bytes so multiple sheets can accumulate
+                st.session_state["current_workbook_bytes"] = out_buf2.getvalue()
+
                 st.download_button(
                     "Download ORIGINAL workbook with SQM & prices filled (rows)",
                     data=out_buf2,
@@ -1639,7 +1658,7 @@ if st.session_state["calc_df"] is not None:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
-    elif layout_type == "Items are in columns (Foot Locker-style)":
+elif layout_type == "Items are in columns (Foot Locker-style)":
         st.caption("Type the exact Excel row numbers where you want SQM and prices to go across each material column (e.g. 150, 200). Leave blank to skip a field.")
 
         sqm_annum_row_str = st.text_input(
@@ -1681,28 +1700,29 @@ if st.session_state["calc_df"] is not None:
             if not any([sqm_annum_row, sqm_run_row, price_annum_row, price_run_row]):
                 st.warning("Please type at least one output row (e.g. 120, 150, 200).")
             else:
-                wb2 = load_workbook(BytesIO(file_bytes))
+                base_bytes2 = st.session_state.get("current_workbook_bytes", file_bytes)
+                wb2 = load_workbook(BytesIO(base_bytes2))
                 ws2 = wb2[sheet_name]
 
                 for _, r in calc_with_price.iterrows():
                     src_col = r.get("Source Column")
-                    if src_col is None or (isinstance(src_col, float) and pd.isna(src_col)):
+                    if not src_col or not isinstance(src_col, str):
                         continue
-                    col_letter = str(src_col)
+                    col_letter = src_col.strip()
 
-                    if sqm_annum_row is not None:
+                    if sqm_annum_row:
                         val = r.get("SQM per annum")
                         if val is not None and not pd.isna(val):
                             ws2[f"{col_letter}{sqm_annum_row}"] = float(val)
-                    if sqm_run_row is not None:
+                    if sqm_run_row:
                         val = r.get("SQM per run")
                         if val is not None and not pd.isna(val):
                             ws2[f"{col_letter}{sqm_run_row}"] = float(val)
-                    if price_annum_row is not None:
+                    if price_annum_row:
                         val = r.get("Price per annum (AUD)")
                         if val is not None and not pd.isna(val):
                             ws2[f"{col_letter}{price_annum_row}"] = float(val)
-                    if price_run_row is not None:
+                    if price_run_row:
                         val = r.get("Price per run (AUD)")
                         if val is not None and not pd.isna(val):
                             ws2[f"{col_letter}{price_run_row}"] = float(val)
@@ -1711,9 +1731,13 @@ if st.session_state["calc_df"] is not None:
                 wb2.save(out_buf2)
                 out_buf2.seek(0)
 
+                # Update current workbook bytes so multiple sheets can accumulate
+                st.session_state["current_workbook_bytes"] = out_buf2.getvalue()
+
                 st.download_button(
                     "Download ORIGINAL workbook with SQM & prices filled (columns)",
                     data=out_buf2,
                     file_name=f"{sheet_name}_with_pricing_columns.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
